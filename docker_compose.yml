@@ -1,0 +1,61 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  db:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: spura_db
+      POSTGRES_USER: spura_user
+      POSTGRES_PASSWORD: spura_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+  
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+  
+  api:
+    build:
+      context: ./spura-engine
+      dockerfile: Dockerfile
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://spura_user:spura_password@db:5432/spura_db
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./spura-engine:/app
+      - ./models:/app/models
+  
+  worker:
+    build:
+      context: ./spura-engine
+      dockerfile: Dockerfile
+    command: celery worker --loglevel=info
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://spura_user:spura_password@db:5432/spura_db
+      - REDIS_URL=redis://redis:6379/0
+  
+  frontend:
+    build:
+      context: ./spura-gui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api:8000
+
+volumes:
+  postgres_data:
