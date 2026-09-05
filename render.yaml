@@ -44,4 +44,5 @@ databases:
     databaseName: spura_db
     user: spura_user
   - name: spura-redis
+    type: redis
     plan: free
