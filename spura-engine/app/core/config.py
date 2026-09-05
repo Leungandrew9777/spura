@@ -1,5 +1,7 @@
-from pydantic_settings import BaseSettings
-from typing import Optional
+from pydantic_settings import BaseSettings, NoDecode
+from pydantic import field_validator
+from typing import Annotated, Optional
+import json
 import os
 
 class Settings(BaseSettings):
@@ -20,7 +22,16 @@ class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
     DEBUG: bool = True
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = ["*"]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            if v.strip().startswith("["):
+                return json.loads(v)
+            return [o.strip() for o in v.split(",") if o.strip()]
+        return v
     
     # External APIs
     FOOTBALL_DATA_BASE_URL: str = "http://www.football-data.co.uk"

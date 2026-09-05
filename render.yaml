@@ -1,0 +1,47 @@
+# Render Blueprint for the Spura backend (free tier).
+# Deploy from the GitHub repo root (Leungandrew9777/spura) via
+#   Render Dashboard > New > Blueprint  (or `render blueprint deploy`).
+#
+# Note: Render's free PostgreSQL databases expire after 30 days.
+services:
+  - type: web
+    name: spura-engine
+    runtime: docker
+    rootDir: ./spura-engine
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spura-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: spura-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: spura-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: spura-redis
+          property: connectionString
+      - key: CORS_ORIGINS
+        value: '["*"]'
+      - key: DEBUG
+        value: "false"
+      - key: MODEL_DIR
+        value: /app/models
+
+databases:
+  - name: spura-db
+    plan: free
+    databaseName: spura_db
+    user: spura_user
+  - name: spura-redis
+    plan: free

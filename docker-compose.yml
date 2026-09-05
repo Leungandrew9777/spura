@@ -1,6 +1,11 @@
 # docker-compose.yml
-version: '3.8'
-
+# Runs the backend stack (Postgres, Redis, API, Celery worker) locally/self-hosted.
+# The frontend is deployed separately to Vercel. The `frontend` service below is
+# provided for optional full-stack local testing.
+#
+# IMPORTANT: NEXT_PUBLIC_* vars are baked into the frontend at build time and are
+# resolved in the BROWSER, not inside the container. Use a URL reachable from the
+# user's browser (e.g. http://localhost:8000 locally, or your public domain).
 services:
   db:
     image: postgres:14
@@ -12,12 +17,12 @@ services:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-  
+
   redis:
     image: redis:7
     ports:
       - "6379:6379"
-  
+
   api:
     build:
       context: ./spura-engine
@@ -28,34 +33,42 @@ services:
     environment:
       - DATABASE_URL=postgresql://spura_user:spura_password@db:5432/spura_db
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - MODEL_DIR=/app/models
+      - 'CORS_ORIGINS=["*"]'
+      - DEBUG=true
     ports:
       - "8000:8000"
     volumes:
-      - ./spura-engine:/app
-      - ./models:/app/models
-  
+      - ./spura-engine/models:/app/models
+
   worker:
     build:
       context: ./spura-engine
       dockerfile: Dockerfile
-    command: celery worker --loglevel=info
+    command: celery -A celery_worker.celery_app worker --loglevel=info
     depends_on:
       - db
       - redis
     environment:
       - DATABASE_URL=postgresql://spura_user:spura_password@db:5432/spura_db
       - REDIS_URL=redis://redis:6379/0
-  
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - MODEL_DIR=/app/models
+      - DEBUG=true
+
   frontend:
     build:
       context: ./spura-gui
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
     ports:
       - "3000:3000"
     depends_on:
       - api
-    environment:
-      - NEXT_PUBLIC_API_URL=http://api:8000
 
 volumes:
   postgres_data:
