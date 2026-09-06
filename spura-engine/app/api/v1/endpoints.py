@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import math
 import uuid
 from datetime import datetime, timedelta
@@ -10,10 +11,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import Match, PlayerSeasonStats
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.ml.data_pipeline import LeagueDataPipeline, season_to_fd_code
 from app.ml.feature_engineering import FeatureEngineer
 from app.ml.spura_model import SpuraPredictionModel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -66,19 +69,43 @@ def generate_task_id() -> str:
     return uuid.uuid4().hex
 
 
+async def _set_task_progress(task_id: str, value: int) -> None:
+    redis = aioredis.from_url(settings.REDIS_URL)
+    try:
+        await redis.set(f"task:{task_id}:progress", '{"progress": %d}' % value)
+    finally:
+        await redis.aclose()
+
+
+async def _mark_task_complete(task_id: str) -> None:
+    redis = aioredis.from_url(settings.REDIS_URL)
+    try:
+        await redis.set(f"task:{task_id}:complete", "1")
+    finally:
+        await redis.aclose()
+
+
 @router.post("/data/sync")
 async def sync_data(
     league: str,
     season: str,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
 ):
     """Trigger data synchronization for a league."""
     task_id = generate_task_id()
+    await _set_task_progress(task_id, 0)
 
     def run_sync():
-        pipeline = LeagueDataPipeline(db, league)
-        pipeline.sync_league_data(season)
+        db = SessionLocal()
+        try:
+            pipeline = LeagueDataPipeline(db, league)
+            asyncio.run(pipeline.sync_league_data(season))
+        except Exception:
+            logger.exception("Sync failed for league %s", league)
+        finally:
+            db.close()
+        asyncio.run(_set_task_progress(task_id, 100))
+        asyncio.run(_mark_task_complete(task_id))
 
     background_tasks.add_task(run_sync)
 
@@ -127,19 +154,26 @@ async def task_websocket(
 async def recalibrate_model(
     league: str,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
 ):
     """Retrain model for a specific league."""
     task_id = generate_task_id()
+    await _set_task_progress(task_id, 0)
 
     def run_train():
-        fe = FeatureEngineer(db, league)
-        training_data = fe.prepare_training_data()
-        if training_data.empty:
-            raise ValueError(f"No training data for league {league}")
-        model = SpuraPredictionModel(league)
-        model.train(training_data)
-        model.save_model()
+        db = SessionLocal()
+        try:
+            fe = FeatureEngineer(db, league)
+            training_data = fe.prepare_training_data()
+            if training_data.empty:
+                raise ValueError(f"No training data for league {league}")
+            model = SpuraPredictionModel(league)
+            model.train(training_data)
+        except Exception:
+            logger.exception("Model recalibration failed for league %s", league)
+        finally:
+            db.close()
+        asyncio.run(_set_task_progress(task_id, 100))
+        asyncio.run(_mark_task_complete(task_id))
 
     background_tasks.add_task(run_train)
 
